@@ -3,6 +3,7 @@
 
 numpy==2.5.5
 pandas==3.1.1
+pyarrow==26.0.1  # pandas 的 parquet 引擎：split.py 读写 outputs/splits/*.parquet 依赖它
 scipy==1.18.1
 scikit-learn==1.9.1
 

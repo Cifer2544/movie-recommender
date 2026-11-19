@@ -61,7 +61,7 @@ import pandas as pd
 from scipy import sparse
 
 from .. import config
-from ..evaluate import TrainIndex, evaluate_scores, format_metrics
+from ..evaluate import TrainIndex, evaluate_scores, format_metrics, report_metrics
 
 
 class ItemCF:
@@ -239,23 +239,6 @@ class ItemCF:
 # ---------------------------------------------------------------
 # 网格搜索 + 评估（python -m src.models.itemcf）
 # ---------------------------------------------------------------
-def _report(model, split_map, train_index, title):
-    """对同一份打分输出两种相关性口径。
-
-    打分只算一次：scores 是 (n_users, n_items) 的稠密矩阵，重复 score_users()
-    会白白多做一遍 M @ sim。
-    """
-    print(f"\n== {title} ==")
-    users, scores = model.score_users()
-    for relevant_only in (True, False):
-        m = evaluate_scores(
-            scores, users, model.items_, split_map,
-            relevant_only=relevant_only, train_index=train_index,
-        )
-        tag = "Rating>=4 用户" if relevant_only else "全部用户"
-        print(f"  [{tag}] {format_metrics(m)}")
-
-
 def tune_and_evaluate():
     from ..data_loader import load_all
     from ..split import load_splits, leave_one_out_split
@@ -339,8 +322,8 @@ def tune_and_evaluate():
     )
     model.sim_ = ItemCF._top_k(sim_best, best_k)
 
-    _report(model, valid_splits, train_index, "验证集（同一配置）")
-    _report(model, test_splits, train_index, "测试集（最终报告口径）")
+    report_metrics(model, valid_splits, train_index, "验证集（同一配置）")
+    report_metrics(model, test_splits, train_index, "测试集（最终报告口径）")
 
     config.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = config.RESULTS_DIR / "itemcf_tuning.txt"
@@ -379,11 +362,12 @@ def tune_and_evaluate():
     # 重训后物品表可能变大（valid 里有 train 没出现过的电影），索引要重建
     full_index = TrainIndex(full_train, final.items_)
 
-    _report(final, full_splits, full_index, "测试集（train+valid 重训）")
+    report_metrics(final, full_splits, full_index, "测试集（train+valid 重训）")
 
+    # 示例推荐用口径②的 final（最终交付模型，见过 train+valid，屏蔽集同样是 full_train）
     movie_title = movies.set_index("MovieID")[["Title", "Genres"]]
-    print("\n== 示例推荐：UserID=1（Top 5，训练集已交互已屏蔽）==")
-    for movie_id, score in model.top_k(1, 5):
+    print("\n== 示例推荐：UserID=1（Top 5，train+valid 重训模型，已交互已屏蔽）==")
+    for movie_id, score in final.top_k(1, 5):
         title, genres = movie_title.loc[movie_id]
         print(f"  {score:7.3f}  {movie_id:4d}  {title}  [{genres}]")
 

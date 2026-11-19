@@ -150,3 +150,20 @@ def format_metrics(metrics: dict, show_excl_cold: bool = True) -> str:
             f"(n={metrics['n_eval_excl_cold']})"
         )
     return text
+
+
+def report_metrics(model, split_map, train_index, title: str) -> None:
+    """对同一份打分输出两种相关性口径（留出评分 >= 4 的用户 / 全部用户）。
+
+    打分只算一次：score_users() 返回 (n_users, n_items) 稠密矩阵，
+    重复调用会白做一遍全量矩阵乘。
+    """
+    print(f"\n== {title} ==")
+    users, scores = model.score_users()
+    for relevant_only in (True, False):
+        m = evaluate_scores(
+            scores, users, model.items_, split_map,
+            relevant_only=relevant_only, train_index=train_index,
+        )
+        tag = "Rating>=4 用户" if relevant_only else "全部用户"
+        print(f"  [{tag}] {format_metrics(m)}")

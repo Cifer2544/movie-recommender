@@ -94,8 +94,8 @@ movie-recommender/
 
 | 算法 | 状态 | 代码 |
 |---|---|---|
-| ItemCF | 已实现，含 48 组网格搜索 | `src/models/itemcf.py` |
-| BPR | 待实现 | — |
+| ItemCF | 已实现（48 组网格搜索） | `src/models/itemcf.py` |
+| BPR | 已实现（8 组网格 + 验证集早停） | `src/models/bpr.py` |
 | LRURec | 待实现 | — |
 
 ItemCF 在验证集（6,040 位用户）上选出的最优配置为
@@ -107,6 +107,8 @@ ItemCF 在验证集（6,040 位用户）上选出的最优配置为
 | 流行度基线 | train | 0.0351 | 0.0174 | 0.0122 |
 | ItemCF | train | 0.0424 | 0.0201 | 0.0135 |
 | ItemCF | train + valid | 0.0452 | 0.0215 | 0.0143 |
+| BPR | train | 0.0632 | 0.0313 | 0.0217 |
+| BPR | train + valid | 0.0679 | 0.0330 | 0.0226 |
 
 口径：6,040 位用户全部计入；每用户留出 1 条，在全部 3,704 部候选电影上排序，
 训练集已交互的电影置为不可推荐；留出评分 1–3 星按未命中计；物品冷启动
@@ -116,6 +118,23 @@ ItemCF 在验证集（6,040 位用户）上选出的最优配置为
 - 若只评测"留出评分 ≥ 4"的 3,513 位用户，Recall@10 为 0.0544（train）/ 0.0572（train+valid）。
 - train+valid 重训比仅用 train 高约 6.6%（NDCG 0.0201 → 0.0215）。
 - 消融：`drop_negative`（负相似度置零）在最优配置下对指标无影响——`k=20` 时邻居全为正相似度。
+
+BPR 在验证集上选出的最优配置为 `embed_dim=32, lr=5e-3, reg=1e-5`（早停于 epoch 32），
+完整网格见 `outputs/results/bpr_tuning.txt`：
+
+- 相对 ItemCF 提升约 **49%**（0.0424 → 0.0632；重训口径 0.0452 → 0.0679）。
+  pairwise 损失直接优化"正例排在负例之前"，比 ItemCF 的启发式邻域打分更贴合 Top-N 目标。
+- 8 组中 `embed_dim=64, lr=1e-3` 的两组 `best_epoch` 均撞到 `max_epochs=50`，
+  说明该学习率尚未收敛；最优组合 `lr=5e-3` 在 epoch 32 收敛，不受该截断影响，
+  但更大 `max_epochs` 或更细的网格仍有提升空间。
+- 正则强度影响很小（`reg=1e-5` 的 NDCG@10 = 0.0339 对 `1e-4` 的 0.0320），
+  说明 ML-1M 上过拟合不是主要矛盾。
+
+**关于 "train + valid" 一行**：该口径是在把 valid 并入训练集后重训、再评 test，
+此时没有独立验证集可用于早停，BPR 只能固定在验证集选出的轮数（epoch 32）训练。
+数据量仅增加 0.6%，但训练轮数无法随数据自适应，理论上存在欠拟合风险；
+本数据上重训后指标反而更高（0.0632 → 0.0679），风险未显化。
+该行仅作参考，主要结论以 "train" 行为准。
 
 ---
 
@@ -193,12 +212,16 @@ python -m src.eda
 |---|---|
 | `python -m src.models.popularity` | 流行度基线（下界参照，同时用于自检评估流程） |
 | `python -m src.models.itemcf` | ItemCF：48 组网格搜索 → 测试集评估 → 负相似度置零 A/B → train+valid 重训 |
+| `python -m src.models.bpr` | BPR：8 组网格（含验证集早停）→ 测试集评估 → train+valid 重训 |
 
 ItemCF 的网格为 `weighting ∈ {binary, rating, centered}` ×
-`alpha ∈ {0, 0.25, 0.5, 1.0}` × `k_neighbors ∈ {20, 50, 100, 200}`，
-最优配置与完整表格写入 `outputs/results/itemcf_tuning.txt`（CPU 单次运行数分钟）。
+`alpha ∈ {0, 0.25, 0.5, 1.0}` × `k_neighbors ∈ {20, 50, 100, 200}`；
+BPR 的网格为 `embed_dim ∈ {32, 64}` × `lr ∈ {1e-3, 5e-3}` × `reg ∈ {1e-5, 1e-4}`，
+每 2 个 epoch 在验证集上评估一次 NDCG@10 并按 patience=3 早停。
+两者的最优配置与完整表格分别写入 `outputs/results/itemcf_tuning.txt`、
+`outputs/results/bpr_tuning.txt`。
 
-BPR 与 LRURec 的命令随对应模块实现后补充。
+LRURec 的命令随对应模块实现后补充。
 
 ### 3.6 交互界面
 
@@ -222,10 +245,11 @@ movie-recommender/
 │   └── models/
 │       ├── __init__.py
 │       ├── popularity.py         流行度基线
-│       └── itemcf.py             评分项 Algorithms：ItemCF + 网格搜索
+│       ├── itemcf.py             评分项 Algorithms：ItemCF + 网格搜索
+│       └── bpr.py                BPR：pairwise 损失 + 负采样 + 验证集早停
 ├── outputs/                      运行产物（已 .gitignore，可随时重建）
 │   ├── splits/                   train/valid/test.parquet
-│   ├── results/                  dataset_info / split_summary / eda_stats / itemcf_tuning
+│   ├── results/                  dataset_info / split_summary / eda_stats / itemcf_tuning / bpr_tuning
 │   └── figures/                  EDA 图表
 ├── models/                       模型权重（BPR / LRURec 实现后写入，已 .gitignore）
 ├── requirements.txt              直接依赖
