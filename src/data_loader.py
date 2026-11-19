@@ -14,8 +14,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from . import config
-from .config import MOVIES_PATH, RATINGS_PATH, USERS_PATH
+from .config import DATA_DIR, MOVIES_PATH, RATINGS_PATH, USERS_PATH
 
 RATINGS_COLUMNS = ["UserID", "MovieID", "Rating", "Timestamp"]
 MOVIES_COLUMNS = ["MovieID", "Title", "Genres"]
@@ -28,7 +27,7 @@ def _read_dat(path, names):
         raise FileNotFoundError(
             f"找不到数据文件：{path}\n"
             f"请从 https://files.grouplens.org/datasets/movielens/1m/ 下载并解压，"
-            f"使 ratings.dat / movies.dat / users.dat 位于 {config.DATA_DIR} 下。"
+            f"使 ratings.dat / movies.dat / users.dat 位于 {DATA_DIR} 下。"
         )
     return pd.read_csv(
         path,

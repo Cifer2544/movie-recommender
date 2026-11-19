@@ -20,6 +20,7 @@ from contextlib import redirect_stdout
 
 from . import config
 from .data_loader import load_all
+from .preprocess import encode_genres
 
 LINE = "=" * 72
 
@@ -28,11 +29,11 @@ def build_comparison_dataset(ratings, movies, users):
     """构建 comparison dataset：一份可供三个模型共用的建模宽表。
 
     三表按 UserID / MovieID 左连接，得到"每条评分 + 用户画像 + 电影信息"的
-    长表；题材拆成 18 个 0/1 列（multi-hot），方便后续内容类特征与分组分析。
+    长表；题材列复用 preprocess.encode_genres 的 18 列 multi-hot。
     该表只描述已观测的 (用户, 电影) 对，不含任何由标签推导出的统计量，
     因此不会把验证/测试标签泄漏进训练特征。
     """
-    genres = sorted({g for items in movies["GenreList"] for g in items})
+    flags = encode_genres(movies).set_index("MovieID").add_prefix("genre_")
 
     df = (
         ratings.merge(
@@ -41,13 +42,9 @@ def build_comparison_dataset(ratings, movies, users):
             how="left",
         )
         .merge(users, on="UserID", how="left")
+        .join(flags, on="MovieID")
     )
-
-    for g in genres:
-        df[f"genre_{g}"] = df["GenreList"].apply(lambda items, g=g: int(g in items))
-    df = df.astype({f"genre_{g}": "int8" for g in genres})
-
-    return df, genres
+    return df, [c.removeprefix("genre_") for c in flags.columns]
 
 
 def section(title):

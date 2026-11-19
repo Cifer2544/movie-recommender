@@ -29,6 +29,7 @@ GENDER_MAP = {"F": 0, "M": 1}
 
 # Age 是分组编号而非连续值，映射成 0-6 的序数，避免 56 被当成 56 倍于 1
 AGE_TO_ORDINAL = {1: 0, 18: 1, 25: 2, 35: 3, 45: 4, 50: 5, 56: 6}
+# 原始编号 -> 区间名，供报告与图表标注使用（不参与建模）
 AGE_LABELS = {
     1: "Under 18",
     18: "18-24",
@@ -69,12 +70,10 @@ def encode_genres(movies: pd.DataFrame) -> pd.DataFrame:
     绝大多数组合只出现几次；multi-hot 只需 18 列且保留题材共现信息。
     """
     genres = genre_columns(movies)
-    out = pd.DataFrame({"MovieID": movies["MovieID"].to_numpy()})
-    for g in genres:
-        out[g] = movies["GenreList"].apply(lambda items, g=g: int(g in items)).to_numpy(
-            dtype="int8"
-        )
-    return out
+    # get_dummies(sep="|") 一次拆完 18 个题材，比逐列 apply 快一个数量级
+    flags = movies["Genres"].str.get_dummies(sep="|").astype("int8")
+    flags.insert(0, "MovieID", movies["MovieID"].to_numpy())
+    return flags[["MovieID", *genres]]
 
 
 def to_implicit(

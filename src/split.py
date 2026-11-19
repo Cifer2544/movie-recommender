@@ -88,20 +88,18 @@ def assert_no_leakage(splits: dict[str, pd.DataFrame]) -> None:
         )
 
     # 3. 时间序单调：train 的最后一条不晚于 valid 的第一条，valid 不晚于 test
-    def _max_ts(part: pd.DataFrame) -> pd.Series:
-        return part.groupby("UserID")["Timestamp"].max()
+    def _edge(part: pd.DataFrame, how: str) -> pd.Series:
+        return part.groupby("UserID")["Timestamp"].agg(how)
 
-    def _min_ts(part: pd.DataFrame) -> pd.Series:
-        return part.groupby("UserID")["Timestamp"].min()
+    train_max, valid_max = _edge(train, "max"), _edge(valid, "max")
+    valid_min, test_min = _edge(valid, "min"), _edge(test, "min")
 
-    users = _max_ts(train).index.intersection(_min_ts(valid).index)
-    assert (_max_ts(train).reindex(users) <= _min_ts(valid).reindex(users)).all(), (
-        "存在用户在 train 中有晚于 valid 的记录"
-    )
-    users = _max_ts(valid).index.intersection(_min_ts(test).index)
-    assert (_max_ts(valid).reindex(users) <= _min_ts(test).reindex(users)).all(), (
-        "存在用户在 valid 中有晚于 test 的记录"
-    )
+    for earlier_max, later_min, msg in (
+        (train_max, valid_min, "存在用户在 train 中有晚于 valid 的记录"),
+        (valid_max, test_min, "存在用户在 valid 中有晚于 test 的记录"),
+    ):
+        users = earlier_max.index.intersection(later_min.index)
+        assert (earlier_max.reindex(users) <= later_min.reindex(users)).all(), msg
 
 
 def coverage_report(splits: dict[str, pd.DataFrame]) -> pd.DataFrame:
