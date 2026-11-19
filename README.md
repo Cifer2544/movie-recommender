@@ -245,9 +245,47 @@ LRURec 的网格为 `embed_dim ∈ {32, 64}` × `lr ∈ {1e-3, 5e-3}`，
 
 首次运行单个模型脚本约 10–35 分钟（含网格搜索与 train+valid 重训），均为纯 CPU 计算。
 
-### 3.6 交互界面
+### 3.6 模型持久化与交互界面
 
-`streamlit` 已列入依赖，界面脚本随最终交付补充。
+界面不能每次启动都重新训练（BPR / LRURec 单次要 1–2 分钟），因此先把训练产物
+落盘，界面只做加载与推理：
+
+```powershell
+python -m src.persist        # 训练三个最终交付模型并落盘（首次约 2 分钟）
+streamlit run src/app.py     # 启动界面
+```
+
+`src/persist.py` 用 **train + valid** 全量重训（与评测口径②一致），产物写入
+`models/<模型>_<超参哈希>_<数据指纹>/`：
+
+| 文件 | 内容 |
+|---|---|
+| `state.npz` | 权重与索引（torch 权重转 ndarray 存放，加载时再转回） |
+| `*.sparse.npz` | 稀疏矩阵（ItemCF 的 R / B / C 与相似度，BPR 与 LRURec 的历史屏蔽矩阵） |
+| `meta.json` | 超参、训练时间、best_epoch、数据规模、fit 耗时 |
+
+缓存规则见 `src/cache.py`：目录名由"超参 JSON 哈希 + 训练数据摘要"拼成，不用
+`*_latest` 这类命名，避免改了数据或超参却静默读到旧权重。同一份数据与超参重复
+运行会打印 `hit` 并跳过训练（实测二次运行不到 2 秒），改超参或改数据会自然产生
+新目录；只存 state 而不 pickle 模型对象，因此重构 `src/models/` 里的类也不影响
+已有缓存。落盘体积实测 ItemCF 5.4 MB、BPR 2.5 MB、LRURec 3.0 MB，合计约 11 MB，
+已被 `.gitignore` 的 `/models/` 规则排除，不随仓库分发。
+
+界面功能：
+
+- 侧边栏选择算法、UserID（或随机换一个）、Top-K，可开启"三模型并排对比"
+- 主区展示用户画像（性别 / 年龄段 / 职业 / 评分条数 / 平均分）、Top-K 推荐、
+  可折叠的历史记录，以及该算法在 test 上的 Recall@10 / NDCG@10 / MRR@10
+- 历史与推荐屏蔽统一使用 train + valid，与离线评估口径一致；不在训练数据中的
+  UserID 会给出冷启动提示
+- 片名在显示层做了还原：`movies.dat` 有 807 条采用冠词后置的目录排序写法
+  （如 `Shawshank Redemption, The (1994)`，目的是让 *The Matrix* 排在 M 而不是 T），
+  界面显示为 `The Shawshank Redemption (1994)`；MovieID 匹配与指标仍用原始列，
+  算法脚本的 stdout 输出保留数据集原样
+
+**注意**：`streamlit` 的热重载只可靠地重载入口脚本。改动 `src/service.py`、
+`src/cache.py` 这类被导入的模块后，需要停止进程并重新 `streamlit run src/app.py`，
+否则页面仍在用内存里的旧模块。
 
 ---
 
@@ -264,6 +302,10 @@ movie-recommender/
 │   ├── split.py                  每用户时序留一 + 防泄漏断言
 │   ├── eda.py                    评分项 Data exploration（四张图表 + 统计摘要）
 │   ├── evaluate.py               统一评估：TrainIndex 缓存 + Recall/NDCG/MRR
+│   ├── cache.py                  模型缓存：指纹命名 + state 存取
+│   ├── persist.py                训练最终交付模型并落盘（python -m src.persist）
+│   ├── service.py                界面服务层：加载缓存模型、取历史、拼推荐表
+│   ├── app.py                    Streamlit 界面入口（streamlit run src/app.py）
 │   └── models/
 │       ├── __init__.py
 │       ├── popularity.py         流行度基线
@@ -274,14 +316,15 @@ movie-recommender/
 │   ├── splits/                   train/valid/test.parquet
 │   ├── results/                  dataset_info / split_summary / eda_stats / *_tuning
 │   └── figures/                  EDA 图表
-├── models/                       模型权重目录（当前脚本不落盘，已 .gitignore）
+├── models/                       模型缓存（已 .gitignore，由 python -m src.persist 生成）
 ├── requirements.txt              直接依赖
 ├── requirements.lock.txt         全量依赖快照
 └── README.md
 ```
 
 推荐运行顺序：`data_loader` → `dataset_info` / `eda` / `split` →
-`models.popularity` / `models.itemcf` / `models.bpr` / `models.lrurec`。
+`models.popularity` / `models.itemcf` / `models.bpr` / `models.lrurec` →
+`persist` → `streamlit run src/app.py`。
 
 `src/models/*` 优先复用 `outputs/splits/*.parquet`，文件不存在时回退到现场划分，
 因此直接运行任一模型脚本也能自动就绪。

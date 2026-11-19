@@ -267,6 +267,53 @@ class BPR:
             (int(self.items_[j]), float(scores[j])) for j in top if np.isfinite(scores[j])
         ]
 
+    # -----------------------------------------------------------
+    # 缓存接口（见 src/cache.py）
+    # -----------------------------------------------------------
+    def hparams(self) -> dict:
+        """影响训练结果的全部构造参数，seed 必须在内（否则不同 seed 会撞同一缓存）。"""
+        return {
+            "embed_dim": self.embed_dim,
+            "lr": self.lr,
+            "reg": self.reg,
+            "batch_size": self.batch_size,
+            "max_epochs": self.max_epochs,
+            "patience": self.patience,
+            "seed": self.seed,
+        }
+
+    def get_state(self) -> dict:
+        """只存推理所需：两张嵌入表 + 屏蔽用的 _rated。
+
+        训练期的 _pos_mask（(n_users, n_items) bool，约 22 MB）与 train_index_ 不存。
+        """
+        return {
+            "users": self.users_,
+            "items": self.items_,
+            "user_emb": self.user_emb.weight.detach().numpy(),
+            "item_emb": self.item_emb.weight.detach().numpy(),
+            "rated": self._rated,
+        }
+
+    def set_state(self, state: dict, meta: dict) -> "BPR":
+        self.users_ = np.asarray(state["users"])
+        self.items_ = np.asarray(state["items"])
+        self.user_index_ = {u: i for i, u in enumerate(self.users_)}
+        self.item_index_ = {m: i for i, m in enumerate(self.items_)}
+
+        n_users, n_items = len(self.users_), len(self.items_)
+        self.user_emb = nn.Embedding(n_users, self.embed_dim)
+        self.item_emb = nn.Embedding(n_items, self.embed_dim)
+        with torch.no_grad():
+            self.user_emb.weight.copy_(torch.from_numpy(state["user_emb"]))
+            self.item_emb.weight.copy_(torch.from_numpy(state["item_emb"]))
+
+        self._rated = state["rated"]
+        self._pos_mask = None  # 仅负采样阶段使用，推理不需要
+        self.train_index_ = None  # evaluate_scores 收到 None 时会自行构建
+        self.best_epoch_ = int(meta.get("best_epoch", 0))
+        return self
+
 
 # ---------------------------------------------------------------
 # 网格搜索 + 评估（python -m src.models.bpr）

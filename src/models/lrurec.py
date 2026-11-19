@@ -385,6 +385,61 @@ class LRURec:
             (int(self.items_[j]), float(scores[j])) for j in top if np.isfinite(scores[j])
         ]
 
+    # -----------------------------------------------------------
+    # 缓存接口（见 src/cache.py）
+    # -----------------------------------------------------------
+    def hparams(self) -> dict:
+        """影响训练结果的全部构造参数，seed 必须在内（否则不同 seed 会撞同一缓存）。"""
+        return {
+            "embed_dim": self.embed_dim,
+            "lr": self.lr,
+            "batch_size": self.batch_size,
+            "max_epochs": self.max_epochs,
+            "patience": self.patience,
+            "max_len": self.max_len,
+            "n_blocks": self.n_blocks,
+            "dropout": self.dropout,
+            "seed": self.seed,
+        }
+
+    def get_state(self) -> dict:
+        """权重按 ``net.<state_dict key>`` 打平后存 ndarray，不依赖 torch.save 的文件格式。"""
+        state = {
+            "users": self.users_,
+            "items": self.items_,
+            "seq": self._seq,
+            "has_seq": self._has_seq,
+            "rated": self._rated,
+        }
+        for key, value in self._net.state_dict().items():
+            state[f"net.{key}"] = value.detach().numpy()
+        return state
+
+    def set_state(self, state: dict, meta: dict) -> "LRURec":
+        self.users_ = np.asarray(state["users"])
+        self.items_ = np.asarray(state["items"])
+        self.user_index_ = {u: i for i, u in enumerate(self.users_)}
+        self.item_index_ = {m: i for i, m in enumerate(self.items_)}
+        n_users, n_items = len(self.users_), len(self.items_)
+
+        self._net = _LRUNet(
+            n_items, self.embed_dim, self.embed_dim, self.n_blocks, self.dropout
+        )
+        self._net.load_state_dict(
+            {
+                key[len("net.") :]: torch.from_numpy(np.asarray(value))
+                for key, value in state.items()
+                if key.startswith("net.")
+            }
+        )
+
+        self._seq = np.asarray(state["seq"], dtype=np.int64)
+        self._has_seq = np.asarray(state["has_seq"], dtype=bool)
+        self._rated = state["rated"]
+        self.train_index_ = None  # evaluate_scores 收到 None 时会自行构建
+        self.best_epoch_ = int(meta.get("best_epoch", 0))
+        return self
+
 
 # ---------------------------------------------------------------
 # 网格搜索 + 评估（python -m src.models.lrurec）

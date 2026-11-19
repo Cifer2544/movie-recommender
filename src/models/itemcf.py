@@ -235,6 +235,45 @@ class ItemCF:
             (int(self.items_[j]), float(scores[j])) for j in top if np.isfinite(scores[j])
         ]
 
+    # -----------------------------------------------------------
+    # 缓存接口（见 src/cache.py）
+    # -----------------------------------------------------------
+    def hparams(self) -> dict:
+        """影响结果的构造参数；ItemCF 无随机性，不需要 seed。"""
+        return {
+            "alpha": self.alpha,
+            "k_neighbors": self.k_neighbors,
+            "weighting": self.weighting,
+            "drop_negative": self.drop_negative,
+        }
+
+    def get_state(self) -> dict:
+        """推理所需的全部产物。sim_ 是 dense (n, n)，转 csr 后压缩存储可省约 50 倍空间。"""
+        return {
+            "users": self.users_,
+            "items": self.items_,
+            "sim": sparse.csr_matrix(self.sim_),
+            "R": self.R_,
+            "B": self.B_,
+            "C": self.C_,
+            "item_counts": self.item_counts_,
+            "user_means": self.user_means_,
+        }
+
+    def set_state(self, state: dict, meta: dict) -> "ItemCF":
+        """按 state 恢复；索引 dict 由 users_/items_ 重建，不必进缓存。"""
+        self.users_ = np.asarray(state["users"])
+        self.items_ = np.asarray(state["items"])
+        self.user_index_ = {u: i for i, u in enumerate(self.users_)}
+        self.item_index_ = {m: i for i, m in enumerate(self.items_)}
+        self.sim_ = np.asarray(state["sim"].toarray(), dtype=np.float32)
+        self.R_ = state["R"]
+        self.B_ = state["B"]
+        self.C_ = state["C"]
+        self.item_counts_ = np.asarray(state["item_counts"])
+        self.user_means_ = np.asarray(state["user_means"])
+        return self
+
 
 # ---------------------------------------------------------------
 # 网格搜索 + 评估（python -m src.models.itemcf）
