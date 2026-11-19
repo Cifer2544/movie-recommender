@@ -96,7 +96,7 @@ movie-recommender/
 |---|---|---|
 | ItemCF | 已实现（48 组网格搜索） | `src/models/itemcf.py` |
 | BPR | 已实现（8 组网格 + 验证集早停） | `src/models/bpr.py` |
-| LRURec | 待实现 | — |
+| LRURec | 已实现（4 组网格 + 验证集早停） | `src/models/lrurec.py` |
 
 ItemCF 在验证集（6,040 位用户）上选出的最优配置为
 `weighting=binary, alpha=0, k_neighbors=20`，48 组网格的完整记录见
@@ -109,6 +109,8 @@ ItemCF 在验证集（6,040 位用户）上选出的最优配置为
 | ItemCF | train + valid | 0.0452 | 0.0215 | 0.0143 |
 | BPR | train | 0.0632 | 0.0313 | 0.0217 |
 | BPR | train + valid | 0.0679 | 0.0330 | 0.0226 |
+| LRURec | train | 0.0667 | 0.0352 | 0.0255 |
+| LRURec | train + valid | 0.0831 | 0.0471 | 0.0363 |
 
 口径：6,040 位用户全部计入；每用户留出 1 条，在全部 3,704 部候选电影上排序，
 训练集已交互的电影置为不可推荐；留出评分 1–3 星按未命中计；物品冷启动
@@ -135,6 +137,23 @@ BPR 在验证集上选出的最优配置为 `embed_dim=32, lr=5e-3, reg=1e-5`（
 数据量仅增加 0.6%，但训练轮数无法随数据自适应，理论上存在欠拟合风险；
 本数据上重训后指标反而更高（0.0632 → 0.0679），风险未显化。
 该行仅作参考，主要结论以 "train" 行为准。
+
+LRURec 在验证集上选出的最优配置为 `embed_dim=64, lr=1e-3`（早停于 epoch 10），
+`d_state` 固定等于 `embed_dim`、`n_blocks=2`、`max_len=50`，完整网格见
+`outputs/results/lrurec_tuning.txt`：
+
+- 相对 BPR 提升约 **12%**（0.0313 → 0.0352）；重训口径从 0.0330 升到 0.0471（+43%）。
+  这是三者中唯一显式建模交互顺序的模型，增益来自序列信息本身。
+- 学习率的影响大于嵌入维度：`lr=5e-3` 的两组都在 epoch 8 触顶（valid NDCG 0.031–0.034），
+  而 `d=64, lr=1e-3` 训到 epoch 10 达到 0.0453。递推状态对步长敏感，
+  过大的 lr 会更快进入平台期。
+- 重训口径的提升幅度（+34%）远大于 BPR（+5%）：把 valid 并入后每个用户的历史多一条交互，
+  而 LRURec 的打分完全由序列决定。该行同样仅作参考。
+- 训练目标是 one-target-per-user（每用户仅对序列末位预测一次），约 6,040 个训练对，
+  比 BPR 的 98 万三元组少两个数量级，训练信号稀疏是它在低学习率下波动较大的原因；
+  trade-off 的量化说明见 `src/models/lrurec.py` 模块文档第 5 条。
+- 零正例用户（train 中无 ≥ 4 星交互，共 2 位：3598、4486）没有可编码的历史，
+  打分置为 `-inf`，评估中一律未命中，`top_k` 返回空列表。这是序列模型的固有限制。
 
 ---
 
@@ -213,15 +232,18 @@ python -m src.eda
 | `python -m src.models.popularity` | 流行度基线（下界参照，同时用于自检评估流程） |
 | `python -m src.models.itemcf` | ItemCF：48 组网格搜索 → 测试集评估 → 负相似度置零 A/B → train+valid 重训 |
 | `python -m src.models.bpr` | BPR：8 组网格（含验证集早停）→ 测试集评估 → train+valid 重训 |
+| `python -m src.models.lrurec` | LRURec：4 组网格（含验证集早停）→ 测试集评估 → train+valid 重训 |
 
 ItemCF 的网格为 `weighting ∈ {binary, rating, centered}` ×
 `alpha ∈ {0, 0.25, 0.5, 1.0}` × `k_neighbors ∈ {20, 50, 100, 200}`；
 BPR 的网格为 `embed_dim ∈ {32, 64}` × `lr ∈ {1e-3, 5e-3}` × `reg ∈ {1e-5, 1e-4}`，
-每 2 个 epoch 在验证集上评估一次 NDCG@10 并按 patience=3 早停。
-两者的最优配置与完整表格分别写入 `outputs/results/itemcf_tuning.txt`、
-`outputs/results/bpr_tuning.txt`。
+每 2 个 epoch 在验证集上评估一次 NDCG@10 并按 patience=3 早停；
+LRURec 的网格为 `embed_dim ∈ {32, 64}` × `lr ∈ {1e-3, 5e-3}`，
+同样每 2 个 epoch 评估、patience=3 早停。
+三者的最优配置与完整表格分别写入 `outputs/results/itemcf_tuning.txt`、
+`outputs/results/bpr_tuning.txt`、`outputs/results/lrurec_tuning.txt`。
 
-LRURec 的命令随对应模块实现后补充。
+首次运行单个模型脚本约 10–35 分钟（含网格搜索与 train+valid 重训），均为纯 CPU 计算。
 
 ### 3.6 交互界面
 
@@ -246,18 +268,20 @@ movie-recommender/
 │       ├── __init__.py
 │       ├── popularity.py         流行度基线
 │       ├── itemcf.py             评分项 Algorithms：ItemCF + 网格搜索
-│       └── bpr.py                BPR：pairwise 损失 + 负采样 + 验证集早停
+│       ├── bpr.py                BPR：pairwise 损失 + 负采样 + 验证集早停
+│       └── lrurec.py             LRURec：复数线性递推 + 末位 next-item 预测
 ├── outputs/                      运行产物（已 .gitignore，可随时重建）
 │   ├── splits/                   train/valid/test.parquet
-│   ├── results/                  dataset_info / split_summary / eda_stats / itemcf_tuning / bpr_tuning
+│   ├── results/                  dataset_info / split_summary / eda_stats / *_tuning
 │   └── figures/                  EDA 图表
-├── models/                       模型权重（BPR / LRURec 实现后写入，已 .gitignore）
+├── models/                       模型权重目录（当前脚本不落盘，已 .gitignore）
 ├── requirements.txt              直接依赖
 ├── requirements.lock.txt         全量依赖快照
 └── README.md
 ```
 
-推荐运行顺序：`data_loader` → `dataset_info` / `eda` / `split` → `models.popularity` / `models.itemcf`。
+推荐运行顺序：`data_loader` → `dataset_info` / `eda` / `split` →
+`models.popularity` / `models.itemcf` / `models.bpr` / `models.lrurec`。
 
 `src/models/*` 优先复用 `outputs/splits/*.parquet`，文件不存在时回退到现场划分，
 因此直接运行任一模型脚本也能自动就绪。
