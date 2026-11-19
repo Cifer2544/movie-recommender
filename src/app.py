@@ -39,18 +39,14 @@ st.markdown(
 <style>
 .block-container { padding-top: 1.6rem; padding-bottom: 3rem; max-width: 1180px; }
 
-.mlrec-hero {
-  border-radius: 18px; padding: 22px 26px; margin-bottom: 20px;
-  background: linear-gradient(115deg, #17171b 0%, #3a1a20 55%, #6d1620 100%);
-  box-shadow: 0 10px 30px rgba(23, 23, 27, .18);
-}
+.mlrec-hero { padding: 2px 0 4px; margin-bottom: 18px; }
 .mlrec-hero h1 {
-  color: #fff; font-size: 27px; margin: 0 0 8px; letter-spacing: .4px; font-weight: 700;
+  color: #17171b; font-size: 26px; margin: 0 0 6px; letter-spacing: .2px; font-weight: 700;
 }
-.mlrec-hero p { color: #c9c9d2; font-size: 13.5px; margin: 0; line-height: 1.65; }
+.mlrec-hero p { color: #6b6b76; font-size: 13.5px; margin: 0; line-height: 1.65; }
 .mlrec-chip {
-  display: inline-block; margin: 12px 8px 0 0; padding: 3px 11px;
-  border-radius: 999px; background: rgba(255,255,255,.13); color: #fff;
+  display: inline-block; margin: 12px 8px 0 0; padding: 2px 10px;
+  border-radius: 999px; background: #f5f5f8; border: 1px solid #e6e6ec; color: #4f4f5a;
   font-size: 12px; letter-spacing: .2px;
 }
 

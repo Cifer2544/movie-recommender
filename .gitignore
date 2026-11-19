@@ -8,9 +8,13 @@ ml-1m/
 
 # ---------------------------------------------------------------
 # Course materials / documents
-# All PDFs ignored. To commit a report later: git add -f report/x.pdf
+# Reports are submitted via canvas, not GitHub: all PDF/DOCX ignored.
+# To commit a report later: git add -f report/x.pdf
 # ---------------------------------------------------------------
 *.pdf
+*.docx
+*.doc
+/report/
 
 # ---------------------------------------------------------------
 # Python
