@@ -1,0 +1,24 @@
+# 直接依赖，版本为 recsys 环境的实测版本（Python 3.12.16）
+# 安装：pip install -r requirements.txt
+
+numpy==2.5.5
+pandas==3.1.1
+scipy==1.18.1
+scikit-learn==1.9.1
+
+matplotlib==3.11.2
+seaborn==0.13.2
+
+tqdm==4.70.1
+streamlit==1.67.0
+
+# ---------------------------------------------------------------
+# torch 不在本文件内。
+# 本机无 NVIDIA GPU，必须安装 CPU 版；PyPI 默认 wheel 自带 CUDA
+# 运行时（2~3 GB），因此单独用 CPU 索引安装：
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+# 实测版本：2.15.0+cpu
+# 完整依赖树见 requirements.lock.txt
+# ---------------------------------------------------------------
