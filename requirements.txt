@@ -23,3 +23,9 @@ streamlit==1.67.0
 # 实测版本：2.15.0+cpu
 # 完整依赖树见 requirements.lock.txt
 # ---------------------------------------------------------------
+#
+# 提交物构建脚本的依赖不在本文件内：只有 report/build_report.py
+# 需要 python-docx、report/build_slides.py 需要 python-pptx，
+# 推荐与评估流程完全不依赖，单独安装即可：
+#
+#   pip install python-docx python-pptx

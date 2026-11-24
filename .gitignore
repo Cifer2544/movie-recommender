@@ -8,13 +8,16 @@ ml-1m/
 
 # ---------------------------------------------------------------
 # Course materials / documents
-# Reports are submitted via canvas, not GitHub: all PDF/DOCX ignored.
-# To commit a report later: git add -f report/x.pdf
+# Reports and slides are submitted via canvas, not GitHub:
+# all PDF / DOCX / PPTX files are ignored. To commit one later:
+#   git add -f MovieLens1M_Technical_Report.docx
 # ---------------------------------------------------------------
 *.pdf
 *.docx
 *.doc
-/report/
+*.ppt
+*.pptx
+/submission/
 
 # ---------------------------------------------------------------
 # Python
