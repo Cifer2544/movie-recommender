@@ -114,7 +114,7 @@ st.markdown(
 def render_rank_cards(df: pd.DataFrame, show_genres: bool = True) -> None:
     """把推荐表渲染成卡片：前三名用主色徽章，得分右对齐等宽数字。"""
     if df.empty:
-        st.caption("（无推荐：该用户在训练数据中缺少正反馈）")
+        st.caption("（无可用推荐）")
         return
 
     cards = []
@@ -179,8 +179,16 @@ if side.button("随机换一个用户", width="stretch"):
     st.session_state["uid"] = int(users[np.random.randint(len(users))])
     st.rerun()
 
+# 不设 max_value、下界放到 0：任何 ID 都能提交，由后端判断是否在数据集内，
+# 走冷启动提示而不是让控件在前端直接判为越界。若把上下限写死成 1–6040，
+# 输入 9999 只会得到控件的红色报错，提示说明就无处安放。
 uid = side.number_input(
-    "UserID", min_value=int(users.min()), max_value=int(users.max()), step=1, key="uid"
+    "UserID",
+    min_value=0,
+    step=1,
+    key="uid",
+    help=f"MovieLens-1M 的用户 ID 为 {int(users.min())} – {int(users.max())}；"
+    "输入范围外的 ID 会提示不在数据集中，并按冷启动处理",
 )
 k = side.slider("推荐数量 Top-K", min_value=5, max_value=20, value=config.TOP_K)
 compare = side.toggle("三模型并排对比", value=False)
@@ -195,16 +203,11 @@ except FileNotFoundError as exc:
     st.error(str(exc))
     st.stop()
 
-if not service.known_user(uid):
-    st.markdown(
-        '<div class="mlrec-hero"><h1>MovieLens 电影推荐</h1>'
-        f"<p>UserID {uid} 不在训练数据中，属于冷启动用户，"
-        "三个模型都无法给出个性化推荐。</p></div>",
-        unsafe_allow_html=True,
-    )
-    st.stop()
-
 profile = service.user_profile(uid)
+is_known = service.known_user(uid)
+
+# 冷启动只换 chip，不另起一块 hero，否则标题会重复渲染两次；具体说明交给下方警告条
+hero_chip = "" if is_known else '<span class="mlrec-chip">冷启动 · 热门兜底</span>'
 
 st.markdown(
     f"""
@@ -213,23 +216,40 @@ st.markdown(
   <p>ItemCF / BPR / LRURec 三个算法在 train+valid 上训练并落盘，界面只做加载与推理。</p>
   <span class="mlrec-chip">{html_lib.escape(service.LABELS[name])}</span>
   <span class="mlrec-chip">UserID {uid}</span>
-  <span class="mlrec-chip">Top {k}</span>
+  <span class="mlrec-chip">Top {k}</span>{hero_chip}
 </div>
 """,
     unsafe_allow_html=True,
 )
+
+if not is_known:
+    st.warning(
+        f"UserID {uid} 不在 MovieLens-1M 数据集中（数据集用户 ID 为 "
+        f"{int(users.min())} – {int(users.max())}，共 {len(users)} 位）。"
+        "该 ID 没有任何评分记录，无法计算个性化推荐；"
+        "下面按训练集评分人数给出热门兜底结果，“得分”表示评分人数，不是模型打分。"
+    )
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("已评分电影", f"{profile['n_history']}", help="train+valid 中的评分条数，test 不参与")
 c2.metric("平均评分", f"{profile['mean_rating']:.2f}")
 c3.metric("评分 >= 4", f"{profile['n_positive']}", help="视作正反馈，BPR / LRURec 只用这部分训练")
 c4.metric("人群", f"{profile['gender']} · {profile['age']}")
-st.caption(
-    f"职业：{profile['occupation']}　|　活跃区间：{profile['first_date']} ~ {profile['last_date']}"
-)
+if profile["n_history"]:
+    st.caption(
+        f"职业：{profile['occupation']}　|　活跃区间：{profile['first_date']} ~ {profile['last_date']}"
+    )
+else:
+    st.caption("职业：未知　|　该用户不在训练数据中，没有可展示的评分记录")
 
 st.markdown(f"#### Top {k} 推荐")
-st.caption(f"已屏蔽该用户看过的 {profile['n_history']} 部电影；得分只在同一模型内可比")
+if rec.attrs.get("fallback"):
+    st.caption(
+        "该算法对这位用户没有个性化结果（训练集中没有正反馈，或用户不在训练集），"
+        "已按训练集评分人数兜底：此时“得分”是评分人数，不是模型打分。"
+    )
+else:
+    st.caption("已屏蔽该用户全部评分记录（train+valid 与 test 留出项）；得分只在同一模型内可比")
 render_rank_cards(rec)
 
 with st.expander(f"最近评分的电影（共 {profile['n_history']} 条，显示最近 12 条）"):
@@ -261,7 +281,10 @@ if compare:
     for col, other in zip(cols, service.MODEL_NAMES):
         with col:
             st.markdown(f"**{service.LABELS[other].split(' · ')[0]}**")
-            render_rank_cards(service.recommend(other, uid, 5), show_genres=False)
+            other_rec = service.recommend(other, uid, 5)
+            render_rank_cards(other_rec, show_genres=True)
+            if other_rec.attrs.get("fallback"):
+                st.caption("（该模型无个性化结果，已用训练集热门兜底）")
     st.caption(
         "三个模型目标不同：ItemCF 按物品共现相似度聚合用户历史，BPR 学用户与物品隐向量的内积，"
         "LRURec 只依据最近一次行为预测下一部。目标不同，Top-K 重合度本就偏低；"

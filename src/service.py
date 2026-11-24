@@ -5,8 +5,8 @@
 - 模型一律从 models/ 的磁盘缓存加载（见 src/cache.py）。缓存未命中直接报错并
   提示先跑 ``python -m src.persist``；绝不在请求路径上现场训练，否则界面每次
   冷启动都要等几分钟。
-- 历史与屏蔽口径统一为 **train + valid**（模型实际训练的数据），不读 test，
-  因此界面里"已评分电影"与推荐屏蔽与离线评估口径一致。
+- 展示历史取 **train + valid**（模型实际训练的数据）；推荐的屏蔽集合在此基础上
+  再加 test 留出的 1 条，即用户全部评分历史，保证推荐都在其看过的电影之外。
 - 返回给界面的 DataFrame 已带好片名与题材，app 层不再碰原始表。
 
 缓存策略
@@ -124,6 +124,35 @@ def full_train() -> pd.DataFrame:
 
 
 @lru_cache(maxsize=1)
+def _test_by_user() -> dict[int, set[int]]:
+    """test 留出的交互仍属"用户已评分"，推荐必须排除；每位用户 1 条。"""
+    try:
+        splits = load_splits()
+    except FileNotFoundError:
+        return {}
+    test = splits["test"]
+    return {int(u): set(int(m) for m in g["MovieID"]) for u, g in test.groupby("UserID")}
+
+
+@lru_cache(maxsize=1)
+def _seen_by_user() -> dict[int, set[int]]:
+    """用户全部评分历史（train + valid + test）；热门兜底必须避开这些电影。"""
+    seen = {
+        int(u): set(int(m) for m in g["MovieID"])
+        for u, g in full_train().groupby("UserID")
+    }
+    for user_id, items_ in _test_by_user().items():
+        seen.setdefault(int(user_id), set()).update(items_)
+    return seen
+
+
+@lru_cache(maxsize=1)
+def popularity_scores() -> pd.Series:
+    """训练集每部电影的评分人数，降序；与离线流行度基线同一口径。"""
+    return full_train().groupby("MovieID").size().sort_values(ascending=False)
+
+
+@lru_cache(maxsize=1)
 def movies() -> pd.DataFrame:
     """片名表，按 MovieID 建索引，只留界面要显示的三列。"""
     return load_movies().set_index("MovieID")[["Title", "Genres", "Year"]]
@@ -229,16 +258,51 @@ def history(user_id: int, limit: int = 12) -> pd.DataFrame:
     ].reset_index(drop=True)
 
 
-def recommend(name: str, user_id: int, k: int = config.TOP_K) -> pd.DataFrame:
-    """Top-K 推荐表（排名 / 片名 / 题材 / 得分），已屏蔽该用户的历史。"""
-    items = get_model(name).top_k(int(user_id), int(k))
-    columns = ["排名", "片名", "题材", "得分"]
-    if not items:
-        return pd.DataFrame(columns=columns)
+_REC_COLUMNS = ["排名", "片名", "题材", "得分"]
 
+
+def _format_table(items: list[tuple[int, float]]) -> pd.DataFrame:
+    """[(MovieID, score)] -> 界面用的四列表（片名已还原冠词、题材已展开）。"""
     df = pd.DataFrame(items, columns=["MovieID", "得分"])
     df.insert(0, "排名", np.arange(1, len(df) + 1))
     df = df.join(movies(), on="MovieID")
     df["片名"] = df["Title"].map(display_title)
     df["题材"] = df["Genres"].str.replace("|", " / ", regex=False)
-    return df[columns]
+    return df[_REC_COLUMNS]
+
+
+def popularity_top_k(user_id: int, k: int = config.TOP_K) -> pd.DataFrame:
+    """按训练集评分人数排序的热门推荐，屏蔽该用户全部评分历史。
+
+    仅用于兜底，``得分`` 列是评分人数而非模型打分，界面上必须标注来源。
+    """
+    seen = _seen_by_user().get(int(user_id), set())
+    picks: list[tuple[int, float]] = []
+    for movie_id, count in popularity_scores().items():
+        if len(picks) >= int(k):
+            break
+        movie_id = int(movie_id)
+        if movie_id in seen:
+            continue
+        picks.append((movie_id, float(count)))
+    return _format_table(picks) if picks else pd.DataFrame(columns=_REC_COLUMNS)
+
+
+def recommend(name: str, user_id: int, k: int = config.TOP_K) -> pd.DataFrame:
+    """Top-K 推荐表（排名 / 片名 / 题材 / 得分），已屏蔽该用户全部评分历史。
+
+    个性化结果为空时改用训练集热门电影兜底：LRURec 对训练集中没有正反馈的
+    用户（如 UserID 3598、4486）会返回空，不在训练集里的 UserID 三个模型都返回空，
+    直接展示空表既违反“至少 5 部电影”的交付要求，也无法演示。是否走了兜底
+    记在 ``df.attrs["fallback"]``，供界面标注来源与得分含义。
+    """
+    model = get_model(name)
+    excluded = _test_by_user().get(int(user_id), set())
+    # top_k 只屏蔽了训练数据；这里补上 test 留出的 1 条，故多取 len(excluded) 条再截断
+    items = model.top_k(int(user_id), int(k) + len(excluded))
+    items = [(mid, score) for mid, score in items if mid not in excluded][: int(k)]
+
+    fallback = not items
+    df = popularity_top_k(user_id, k) if fallback else _format_table(items)
+    df.attrs["fallback"] = fallback and not df.empty
+    return df
